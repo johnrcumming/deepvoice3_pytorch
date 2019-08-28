@@ -47,6 +47,8 @@ from os.path import join, expanduser
 import random
 
 import librosa.display
+import matplotlib
+matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 import sys
 import os
@@ -54,6 +56,9 @@ from tensorboardX import SummaryWriter
 from matplotlib import cm
 from warnings import warn
 from hparams import hparams, hparams_debug_string
+
+import radam
+import ranger
 
 global_step = 0
 global_epoch = 0
@@ -376,14 +381,25 @@ def prepare_spec_image(spectrogram):
 
 def eval_model(global_step, writer, device, model, checkpoint_dir, ismultispeaker):
     # harded coded
+    # texts = [
+    #     "Scientists at the CERN laboratory say they have discovered a new particle.",
+    #     "There's a way to measure the acute emotional intelligence that has never gone out of style.",
+    #     "President Trump met with other leaders at the Group of 20 conference.",
+    #     "Generative adversarial network or variational auto-encoder.",
+    #     "Please call Stella.",
+    #     "Some have accepted this as a miracle without any physical explanation.",
+    # ]
     texts = [
-        "Scientists at the CERN laboratory say they have discovered a new particle.",
-        "There's a way to measure the acute emotional intelligence that has never gone out of style.",
-        "President Trump met with other leaders at the Group of 20 conference.",
-        "Generative adversarial network or variational auto-encoder.",
-        "Please call Stella.",
-        "Some have accepted this as a miracle without any physical explanation.",
+        "i'm peppa pig, this is my brother george, this is mummy pig, and this is daddy pig.",
+        "nick, please I need more data.",
+        "can i have a gino pillow.",
+        "i'm peppa pig",
+        "mister watson, come here, i want to see you",
+        "i see a cat",
+        "i see a dog",
     ]
+
+
     import synthesis
     synthesis._frontend = _frontend
 
@@ -609,11 +625,13 @@ def train(device, model, data_loader, optimizer, writer,
 
             max_seq_len = max(input_lengths.max(), decoder_lengths.max())
             if max_seq_len >= hparams.max_positions:
-                raise RuntimeError(
-                    """max_seq_len ({}) >= max_posision ({})
-Input text or decoder targget length exceeded the maximum length.
-Please set a larger value for ``max_position`` in hyper parameters.""".format(
-                        max_seq_len, hparams.max_positions))
+                print("max_seq_len ({}) >= max_posision ({}), Skipping. ".format(max_seq_len, hparams.max_positions) )
+                continue
+#                 raise RuntimeError(
+#                     """max_seq_len ({}) >= max_posision ({})
+# Input text or decoder targget length exceeded the maximum length.
+# Please set a larger value for ``max_position`` in hyper parameters.""".format(
+#                         max_seq_len, hparams.max_positions))
 
             # Transform data to CUDA device
             if train_seq2seq:
@@ -799,7 +817,7 @@ def build_model():
         window_ahead=hparams.window_ahead,
         window_backward=hparams.window_backward,
         key_projection=hparams.key_projection,
-        value_projection=hparams.value_projection,
+        value_projection=hparams.value_projection
     )
     return model
 
@@ -860,6 +878,11 @@ def restore_parts(path, model):
                 print(str(e))
                 warn("{}: may contain invalid size of weight. skipping...".format(k))
 
+class MyDataParallel(nn.DataParallel):
+    def __getattr__(self, name):
+        return getattr(self.module, name)
+    def get_trainable_parameters():
+        return self.model.get_trainable_parameters()
 
 if __name__ == "__main__":
     args = docopt(__doc__)
@@ -935,12 +958,30 @@ if __name__ == "__main__":
 
     # Model
     model = build_model().to(device)
+ 
+    # Multi GPU
+    if torch.cuda.device_count() > 1:
+        mpmodel = MyDataParallel(model)
+ 
+    if (hparams.optimizer == "Adam"):
+        optimizer = optim.Adam(model.get_trainable_parameters(),
+                            lr=hparams.initial_learning_rate, betas=(
+            hparams.adam_beta1, hparams.adam_beta2),
+            eps=hparams.adam_eps, weight_decay=hparams.weight_decay,
+            amsgrad=hparams.amsgrad)
+    elif (hparams.optimizer == "RAdam"):
+        optimizer = radam.RAdam(model.get_trainable_parameters(),
+                            lr=hparams.initial_learning_rate, betas=(
+            hparams.adam_beta1, hparams.adam_beta2),
+            eps=hparams.adam_eps, weight_decay=hparams.weight_decay)
+    elif (hparams.optimizer == "Ranger"):
+        optimizer = ranger.Ranger(model.get_trainable_parameters(),
+                            lr=hparams.initial_learning_rate, betas=(
+            hparams.adam_beta1, hparams.adam_beta2),
+            eps=hparams.adam_eps, weight_decay=hparams.weight_decay)
+    else:
+        raise RuntimeError("optimizer can be either Adam or RAdam")
 
-    optimizer = optim.Adam(model.get_trainable_parameters(),
-                           lr=hparams.initial_learning_rate, betas=(
-        hparams.adam_beta1, hparams.adam_beta2),
-        eps=hparams.adam_eps, weight_decay=hparams.weight_decay,
-        amsgrad=hparams.amsgrad)
 
     if checkpoint_restore_parts is not None:
         restore_parts(checkpoint_restore_parts, model)
@@ -970,7 +1011,7 @@ if __name__ == "__main__":
     print("Log event path: {}".format(log_event_path))
     writer = SummaryWriter(log_event_path)
 
-    # Train!
+   # Train!
     try:
         train(device, model, data_loader, optimizer, writer,
               init_lr=hparams.initial_learning_rate,

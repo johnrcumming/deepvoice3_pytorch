@@ -15,7 +15,8 @@ def build_from_path(in_dir, out_dir, num_workers=1, tqdm=lambda x: x):
     futures = []
 
     speakers = vctk.available_speakers
-
+    # speakers = ["225"] # force 225
+    
     td = vctk.TranscriptionDataSource(in_dir, speakers=speakers)
     transcriptions = td.collect_files()
     speaker_ids = td.labels
