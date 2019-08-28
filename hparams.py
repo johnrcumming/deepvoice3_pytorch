@@ -93,6 +93,9 @@ hparams = hparam_tf.hparam.HParams(
     binary_divergence_weight=0.1,  # set 0 to disable
     use_guided_attention=True,
     guided_attention_sigma=0.2,
+    
+    # Optimizer - either Adam or RAdam - see radam.py
+    optimizer="Adam",
 
     # Training:
     batch_size=16,
@@ -136,6 +139,7 @@ hparams = hparam_tf.hparam.HParams(
     min_text=20,
     # if true, data without phoneme alignment file(.lab) will be ignored
     process_only_htk_aligned=False,
+    
 )
 
 
